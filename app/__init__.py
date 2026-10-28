@@ -2,6 +2,7 @@ from flask import Flask
 
 from . import db
 from .bookings import bp as bookings_bp
+from .search import bp as search_bp
 
 
 def create_app(config=None):
@@ -12,4 +13,5 @@ def create_app(config=None):
 
     db.init_app(app)
     app.register_blueprint(bookings_bp)
+    app.register_blueprint(search_bp)
     return app

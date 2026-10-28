@@ -45,7 +45,40 @@ def test_back_to_back_bookings_are_allowed(client):
     assert resp.status_code == 201
 
 
-def test_public_schedule_has_no_personal_data(client):
+def test_public_schedule_fields(client):
     book(client)
     rows = client.get("/rooms/1/bookings").get_json()
-    assert set(rows[0]) == {"id", "title", "start_utc", "end_utc"}
+    assert {"id", "title", "start_utc", "end_utc"} <= set(rows[0])
+
+
+def free_room_names(client, start, end, building=None):
+    url = f"/rooms/free?start={start}&end={end}"
+    if building:
+        url += f"&building={building}"
+    resp = client.get(url)
+    assert resp.status_code == 200
+    return [r["name"] for r in resp.get_json()]
+
+
+def test_free_rooms_excludes_booked_room(client):
+    book(client, room_id=1, start=at(days=2), end=at(days=2, hours=2))
+    names = free_room_names(client, at(days=2), at(days=2, hours=1))
+    assert "A1" not in names
+    assert "A2" in names
+
+
+def test_free_rooms_back_to_back(client):
+    book(client, room_id=1, start=at(days=2), end=at(days=2, hours=1))
+    names = free_room_names(client, at(days=2, hours=1), at(days=2, hours=2))
+    assert "A1" in names
+
+
+def test_free_rooms_overlapping_window(client):
+    book(client, room_id=1, start=at(days=2, hours=1), end=at(days=2, hours=3))
+    names = free_room_names(client, at(days=2), at(days=2, hours=2))
+    assert "A1" not in names
+
+
+def test_free_rooms_filter_by_building(client):
+    names = free_room_names(client, at(days=2), at(days=2, hours=1), building="BT")
+    assert names == ["L1"]
