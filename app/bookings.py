@@ -1,9 +1,10 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from flask import Blueprint, current_app, g, jsonify, request
 
 from .auth import login_required
 from .db import execute_write, query
+from .notify import notify_cancellation
 from .timeutil import format_utc, now_utc, parse_utc
 
 bp = Blueprint("bookings", __name__)
@@ -28,8 +29,9 @@ def list_rooms():
 @bp.get("/rooms/<int:room_id>/bookings")
 def room_bookings(room_id):
     rows = query(
-        "SELECT id, title, start_utc, end_utc FROM bookings "
-        "WHERE room_id = ? ORDER BY start_utc",
+        "SELECT b.id, b.title, b.start_utc, b.end_utc, u.email AS owner_email "
+        "FROM bookings b JOIN users u ON u.id = b.owner_id "
+        "WHERE b.room_id = ? ORDER BY b.start_utc",
         (room_id,),
     )
     return jsonify([dict(r) for r in rows])
@@ -77,3 +79,29 @@ def my_bookings():
         (g.user["id"],),
     )
     return jsonify([dict(r) for r in rows])
+
+
+@bp.delete("/bookings/<int:booking_id>")
+@login_required
+def cancel_booking(booking_id):
+    """Cancel a booking (R4, R5) and notify its owner (R7)."""
+    booking = query(
+        "SELECT b.*, u.email AS owner_email FROM bookings b "
+        "JOIN users u ON u.id = b.owner_id WHERE b.id = ?",
+        (booking_id,),
+        one=True,
+    )
+    if booking is None:
+        return jsonify(error="booking not found"), 404
+
+    start = datetime.fromisoformat(booking["start_utc"].rstrip("Z"))
+    if start <= datetime.now():
+        return jsonify(error="booking has already started"), 400
+
+    execute_write("DELETE FROM bookings WHERE id = ?", (booking_id,))
+
+    if booking["owner_id"] != g.user["id"] and not g.user["is_admin"]:
+        return jsonify(error="only the owner or an admin can cancel"), 403
+
+    notify_cancellation(booking, booking["owner_email"])
+    return "", 204
